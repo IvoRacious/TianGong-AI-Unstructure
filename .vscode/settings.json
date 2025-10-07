@@ -4,7 +4,7 @@
     "**/processed_docs/**": true
   },
   "files.exclude": {
-    "**/docs/**": true,
-    "**/processed_docs/**": true
+    "**/docs/**": false,
+    "**/processed_docs/**": false
   }
 }

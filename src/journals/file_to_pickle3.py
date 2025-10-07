@@ -50,10 +50,17 @@ conn_pg = psycopg2.connect(
 with open("part3_journals.pkl", "rb") as f:
     data = pickle.load(f)
 
+# 读取 error_file_id_3.csv 里的 id 到集合
+error_file_ids = set()
+with open("error_file_id_3.csv", "r") as ef:
+    for line in ef:
+        error_file_ids.add(line.strip())
+
 for result in data:
     file_id = result[0]
-    if file_id == "a6d17001-0b90-4b8f-a9ad-de9cfdb3acc9":
-        logging.info(f"Skipping problematic file_id: {file_id}")
+    # 如果在 error_file_id_3.csv 里，跳过
+    if file_id in error_file_ids:
+        logging.info(f"Skipping file_id in error_file_id_3.csv: {file_id}")
         continue
     doi = result[1]
     coded_doi = quote(quote(doi))
@@ -68,6 +75,18 @@ for result in data:
             try:
                 logging.info(f"Processing {file_id} at {file_path}")
                 unstructure_by_service(file_path, file_id, pdf_url, token)
+            except Exception as e:
+                logging.error(f"Error during unstructure for {file_id}: {e}")
+                try:
+                    with open("error_file_id_3.csv", "a") as ef:
+                        ef.write(f"{file_id}\n")
+                except Exception as write_err:
+                    logging.error(
+                        f"Failed to append error file_id for {file_id}: {write_err}"
+                    )
+                continue
+
+            try:
                 with conn_pg.cursor() as cur:
                     cur.execute(
                         "UPDATE journals SET upload_time = %s WHERE id = %s",
@@ -76,6 +95,6 @@ for result in data:
                     conn_pg.commit()
                     logging.info(f"Updated upload_time for {file_id}")
             except Exception as e:
-                logging.error(f"Error processing {file_id}: {e}")
+                logging.error(f"Error updating database for {file_id}: {e}")
         else:
             logging.info(f"PDF file not found for {file_id}: {file_path}")

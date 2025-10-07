@@ -1,11 +1,10 @@
-import concurrent.futures
 import logging
 import os
 import pickle
 import requests
-from collections import deque
 import time
 import random
+from datetime import UTC, datetime
 
 import psycopg2
 from dotenv import load_dotenv
@@ -22,16 +21,8 @@ logging.basicConfig(
 token = os.environ.get("TOKEN")
 input_dir = "docs/esg"
 output_dir = "docs/processed_docs/esg_pickle"
+pdf_url = "http://localhost:8770/mineru"
 
-# Define multiple service endpoints
-service_endpoints = [
-    "http://localhost:8770/pdf",
-    "http://localhost:8771/pdf",
-    "http://localhost:8772/pdf",
-]
-
-docx_url = "http://localhost:8770/docx"
-ppt_url = "http://localhost:8770/ppt"
 
 conn_pg = psycopg2.connect(
     database=os.getenv("POSTGRES_DB"),
@@ -43,7 +34,7 @@ conn_pg = psycopg2.connect(
 
 with conn_pg.cursor() as cur:
     cur.execute(
-        "SELECT id FROM esg_meta WHERE created_time > '2025-04-07' AND unstructure_time IS NULL"
+        "SELECT id FROM esg_meta WHERE created_time > '2025-10-01' AND unstructure_time IS NULL"
     )
     records = cur.fetchall()
 
@@ -58,34 +49,34 @@ def unstructure_by_service(doc_id, doc_path, token, url):
         logging.info(f"Pickle file already exists for document ID: {doc_id}, skipping.")
         return doc_id
 
-    with open(doc_path, "rb") as f:
-        files = {"file": f}
-        headers = {"Authorization": f"Bearer {token}"}
-
-        try:
+    try:
+        with open(doc_path, "rb") as f:
+            files = {"file": f}
+            headers = {"Authorization": f"Bearer {token}"}
             response = requests.post(url, files=files, headers=headers)
             response.raise_for_status()
             response_data = response.json()
-            result = response_data.get("result")
 
-            with open(pickle_path, "wb") as pkl_file:
-                pickle.dump(result, pkl_file)
+        result = response_data.get("result")
 
-            logging.info(
-                f"Document ID: {doc_id} processed successfully with service: {url}"
-            )
-            time.sleep(1 + 2 * random.random())
-            return doc_id
+        with open(pickle_path, "wb") as pkl_file:
+            pickle.dump(result, pkl_file)
 
-        except Exception as e:
-            logging.error(
-                f"Error processing document ID: {doc_id} with service {url}: {str(e)}"
-            )
-            return None
+        logging.info(
+            f"Document ID: {doc_id} processed successfully with service: {url}"
+        )
+        time.sleep(1 + 2 * random.random())
+        return doc_id
+
+    except Exception as e:
+        logging.error(
+            f"Error processing document ID: {doc_id} with service {url}: {str(e)}"
+        )
+        return None
 
 
 def process_documents():
-    """Process documents distributing them across available services"""
+    """Process documents sequentially using the single configured service"""
     documents = []
     for record in records:
         doc_id = record[0]
@@ -96,39 +87,30 @@ def process_documents():
         else:
             logging.info(f"File not found for ID {doc_id}: {doc_path}")
 
-    service_queue = deque(service_endpoints)
+    if not documents:
+        logging.info("No documents to process.")
+        return
 
-    # Process documents using concurrent execution with multiple services
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=len(service_endpoints)
-    ) as executor:
-        futures = []
-        # Distribute documents across services
-        for index, (doc_id, doc_path) in enumerate(documents):
-            # Get the next service from the queue in round-robin fashion
-            service_url = service_queue[0]
-            service_queue.rotate(-1)
-
-            # Submit the processing task to the executor
-            future = executor.submit(
-                unstructure_by_service, doc_id, doc_path, token, service_url
-            )
-            futures.append((future, doc_id, service_url))
-
-        # Wait for all tasks to complete
-        for future, doc_id, service_url in futures:
+    for doc_id, doc_path in documents:
+        result = unstructure_by_service(doc_id, doc_path, token, pdf_url)
+        if result:
+            logging.info(f"{doc_id} processed with service: {pdf_url}")
             try:
-                result = future.result()
-                if result:
-                    logging.info(f"{doc_id} processed with service: {service_url}")
-                else:
-                    logging.error(
-                        f"Failed to process document ID: {doc_id} with service: {service_url}"
+                with conn_pg.cursor() as cur:
+                    cur.execute(
+                        "UPDATE esg_meta SET unstructure_time = %s WHERE id = %s",
+                        (datetime.now(UTC), doc_id),
                     )
+                    conn_pg.commit()
+                    logging.info(f"Updated unstructure_time for {doc_id}")
             except Exception as e:
                 logging.error(
-                    f"Exception while processing document ID: {doc_id}: {str(e)}"
+                    f"Error updating unstructure_time for document ID: {doc_id}: {str(e)}"
                 )
+        else:
+            logging.error(
+                f"Failed to process document ID: {doc_id} with service: {pdf_url}"
+            )
 
 
 # Run the document processing function

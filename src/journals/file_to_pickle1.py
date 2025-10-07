@@ -7,6 +7,7 @@ import psycopg2
 import logging
 from dotenv import load_dotenv
 
+
 load_dotenv()
 
 logging.basicConfig(
@@ -20,7 +21,7 @@ logging.basicConfig(
 token = os.environ.get("TOKEN")
 base_dir = "docs/journals/"
 output_dir = "docs/processed_docs/journal_new_pickle"
-pdf_url = "http://localhost:8770/mineru_sci"
+pdf_url = "http://localhost:8770/mineru"
 
 
 def unstructure_by_service(doc_path, file_id, url, token):
@@ -47,22 +48,23 @@ conn_pg = psycopg2.connect(
     port=os.getenv("POSTGRES_PORT"),
 )
 
+
 with open("part1_journals.pkl", "rb") as f:
     data = pickle.load(f)
 
-# skip_files = {"775ddc0b-692a-4e97-b503-a022dc56b759"}
+# 读取 error_file_id_1.csv 里的 id 到集合
+error_file_ids = set()
+with open("error_file_id_1.csv", "r") as ef:
+    for line in ef:
+        error_file_ids.add(line.strip())
 
 for result in data:
     file_id = result[0]
-    if file_id == "5d2c326d-fec8-495d-84b9-0a81d1b9ecf0":
-        logging.info(f"Skipping problematic file_id: {file_id}")
+    # 如果在 error_file_id_1.csv 里，跳过
+    if file_id in error_file_ids:
+        logging.info(f"Skipping file_id in error_file_id_1.csv: {file_id}")
         continue
     doi = result[1]
-
-    # # 检查是否需要跳过
-    # if file_id in skip_files:
-    #     logging.info(f"Skipping {file_id} - in skip list")
-    #     continue
 
     coded_doi = quote(quote(doi))
     file_path = os.path.join(base_dir, coded_doi + ".pdf")
@@ -76,6 +78,18 @@ for result in data:
             try:
                 logging.info(f"Processing {file_id} at {file_path}")
                 unstructure_by_service(file_path, file_id, pdf_url, token)
+            except Exception as e:
+                logging.error(f"Error during unstructure for {file_id}: {e}")
+                try:
+                    with open("error_file_id_1.csv", "a") as ef:
+                        ef.write(f"{file_id}\n")
+                except Exception as write_err:
+                    logging.error(
+                        f"Failed to append error file_id for {file_id}: {write_err}"
+                    )
+                continue
+
+            try:
                 with conn_pg.cursor() as cur:
                     cur.execute(
                         "UPDATE journals SET upload_time = %s WHERE id = %s",
@@ -84,6 +98,6 @@ for result in data:
                     conn_pg.commit()
                     logging.info(f"Updated upload_time for {file_id}")
             except Exception as e:
-                logging.error(f"Error processing {file_id}: {e}")
+                logging.error(f"Error updating database for {file_id}: {e}")
         else:
             logging.info(f"PDF file not found for {file_id}: {file_path}")

@@ -193,7 +193,7 @@ conn_pg = psycopg2.connect(
 
 with conn_pg.cursor() as cur:
     cur.execute(
-        "SELECT id, country, company_name, report_title, publication_date, report_start_date, report_end_date FROM esg_meta WHERE created_time > '2025-04-06' AND unstructure_time IS NOT NULL"
+        "SELECT id, country, company_name, report_title, publication_date, report_start_date, report_end_date FROM esg_meta WHERE created_time > '2025-10-01' AND unstructure_time IS NOT NULL"
     )
     records = cur.fetchall()
 
