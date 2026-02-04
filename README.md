@@ -140,7 +140,7 @@ tesseract --list-langs
 ```bash
 watch -n 1 nvidia-smi
 #统计文件夹中的文件个数
-find processed_docs/journal_new_pickle/ -type f | wc -l
+find test/queue/pickle/ -type f | wc -l
 ls -lt processed_docs/esg_txt/ | head -n 10
 
 nohup .venv/bin/python3.12 src/journals/chunk_by_title_sci.py > log.txt 2>&1 &
@@ -204,7 +204,7 @@ pkill -f src/journals/chunk_by_title_sci_2.py
 pkill -f src/journals/chunk_by_title_sci_3.py
 
 
-find processed_docs/journal_pickle/ -type f | wc -l
+find test/queue/pdf/ -type f | wc -l
 find processed_docs/journal_pickle/ -maxdepth 1 -type f | wc -l
 find processed_docs/journal_pickle/ -type f -exec ls -lS {} + | sort -n -k 5 | head -n 10
 ls -ltR processed_docs/journal_pickle/ | head -n 10
@@ -236,12 +236,80 @@ nohup .venv/bin/python3 src/journals/file_to_pickle1.py > redo1.log 2>&1 &
 nohup .venv/bin/python3 src/journals/file_to_pickle2.py > redo2.log 2>&1 &
 nohup .venv/bin/python3 src/journals/file_to_pickle3.py > redo3.log 2>&1 &
 nohup .venv/bin/python3 src/journals/file_to_pickle4.py > redo4.log 2>&1 &
+nohup .venv/bin/python3 src/journals/file_to_pickle5.py > redo5.log 2>&1 &
+nohup .venv/bin/python3 src/journals/file_to_pickle6.py > redo6.log 2>&1 &
+nohup .venv/bin/python3 src/journals/file_to_pickle7.py > redo7.log 2>&1 &
+nohup .venv/bin/python3 src/journals/file_to_pickle8.py > redo8.log 2>&1 &
+nohup .venv/bin/python3 src/esg/two_stage_enqueue.py > enqueue.log 2>&1 &
+nohup .venv/bin/python3 src/journals/two_stage_enqueue.py > journal_enqueue.log 2>&1 & # test file
+nohup .venv/bin/python3 src/journals/two_stage_enqueue_urgent.py > enqueue_urgent.log 2>&1 & 
+
+
+#同一个log，不记录顺序：
+# normal（默认目录）
+nohup .venv/bin/python3 src/journals/two_stage_enqueue.py > enqueue.normal.log 2>&1 &
+
+# urgent（随时加塞）
+TWO_STAGE_INPUT_DIR=test/journal-test/urgent \
+TWO_STAGE_OUTPUT_DIR=test/journal-test/pickle-urg \
+TWO_STAGE_PRIORITY=urgent \
+nohup .venv/bin/python3 src/journals/two_stage_enqueue.py > enqueue.urgent.log 2>&1 &
+
+
+
+
+# 重启Redis（未尝试，慎用）
+# Linux 环境
+sudo service redis-server restart
+sudo systemctl restart redis
+redis-cli save && sudo systemctl restart redis
+redis-cli flushall  # 一键清空所有数据，谨慎使用
+
+# Docker 环境
+docker restart redis
+docker exec redis redis-cli save && docker restart redis #清理缓存并重启
+
+# 测试重启成功
+redis-cli ping # 应该返回PONG
+redis-cli dbsize #查看当前数据库中的键数量
+
+
+
+
+
+# 两个队列同时启动，观察顺序
+
+# normal：在 normal 目录里启动
+( cd test/journal-test/normal && \
+  nohup ../../.venv/bin/python3 ../../test/journal-test/two_stage_enqueue.py \
+> enqueue.normal.log 2>&1 & )
+
+# urgent：在 urgent 目录里启动 随时加塞
+( cd test/journal-test/urgent &&  TWO_STAGE_INPUT_DIR=.  TWO_STAGE_OUTPUT_DIR=..pickle-urg \
+  nohup ../../.venv/bin/python3 ../../test/journal-test/two_stage_enqueue.py \
+  > enqueue.urgent.log 2>&1 & )
+
+# 合并查看处理顺序（带队列标识+时间戳）
+( tail -F test/journal-test/normal/celery_two_stage.log | sed 's/^/[normal] /' & \
+  tail -F test/journal-test/urgent/celery_two_stage.log | sed 's/^/[urgent] /' ) \
+| awk '{print strftime("%F %T"), $0; fflush();}'
+
+# 记录合并结果
+nohup bash -c '( tail -F test/journal-test/normal/celery_two_stage.log | sed "s/^/[normal] /" & \
+  tail -F test/journal-test/urgent/celery_two_stage.log | sed "s/^/[urgent] /" ) \
+| awk '"'"'{print strftime("%F %T"), $0; fflush();}'"'"'' \
+> two_stage_merged.log 2>&1 &
+
 
 
 pkill -f "file_to_pickle1.py"
 pkill -f "file_to_pickle2.py"
 pkill -f "file_to_pickle3.py"
 pkill -f "file_to_pickle4.py"
+pkill -f "file_to_pickle5.py"
+pkill -f "file_to_pickle6.py"
+pkill -f "file_to_pickle7.py"
+pkill -f "file_to_pickle8.py"
 
 
 ```

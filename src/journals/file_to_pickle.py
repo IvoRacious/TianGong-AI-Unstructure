@@ -38,7 +38,7 @@ def init_db_pool():
     """Initializes the database connection pool."""
     global db_pool
     try:
-        db_pool = psycopg2.pool.ThreadSafeConnectionPool(
+        db_pool = psycopg2.pool.ThreadedConnectionPool(
             minconn=1,
             maxconn=MAX_WORKERS,  # Max connections equal to worker threads
             database=os.getenv("POSTGRES_DB"),
